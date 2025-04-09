@@ -28,6 +28,32 @@
       return now.toLocaleString('default', { month: 'long', year: 'numeric' });
     }
 
+    function calculatePoints(steps) {
+      if (steps >= 10000) return 1;
+      if (steps >= 5000) return 0.5;
+      return 0;
+    }
+
+    async function loadUserIds() {
+      const { data, error } = await supabase.from('steps').select('user_id');
+      if (!error && data) {
+        const uniqueUserIds = [...new Set(data.map(d => d.user_id))];
+        const userIdSelect = document.getElementById('userId');
+        userIdSelect.innerHTML = '<option value="">--Select User--</option>';
+        uniqueUserIds.forEach(id => {
+          const option = document.createElement('option');
+          option.value = id;
+          option.textContent = id;
+          userIdSelect.appendChild(option);
+        });
+        const otherOption = document.createElement('option');
+        otherOption.value = '__other__';
+        otherOption.textContent = 'Other (Enter manually)';
+        userIdSelect.appendChild(otherOption);
+        document.getElementById('newUserId').style.display = 'none';
+      }
+    }
+
     async function saveStepsToSupabase(userId, steps, selectedDate) {
       const { data, error } = await supabase.from('steps').insert([{ user_id: userId, step_date: selectedDate, steps }]);
       if (error) {
@@ -79,29 +105,35 @@
         const month = `${date.getFullYear()}-${padMonth(date.getMonth() + 1)}`;
         const year = `${date.getFullYear()}`;
         const day = step_date;
+        const points = calculatePoints(steps);
 
         if (!grouped[user_id]) {
-          grouped[user_id] = { monthly: {}, yearly: {}, daily: {} };
+          grouped[user_id] = { monthly: {}, yearly: {}, daily: {}, points: 0 };
         }
         grouped[user_id].monthly[month] = (grouped[user_id].monthly[month] || 0) + steps;
         grouped[user_id].yearly[year] = (grouped[user_id].yearly[year] || 0) + steps;
         grouped[user_id].daily[day] = (grouped[user_id].daily[day] || 0) + steps;
+
+        if (month === currentMonth) {
+          grouped[user_id].points += points;
+        }
       });
 
       const userStats = Object.entries(grouped).map(([userId, data]) => {
         return {
           userId,
           steps: data.monthly[currentMonth] || 0,
+          points: data.points || 0,
           yearlySteps: data.yearly[currentYear] || 0,
           dailySteps: data.daily
         };
-      }).sort((a, b) => b.steps - a.steps);
+      }).sort((a, b) => b.points - a.points);
 
-      let table = `<h2>📊 Dashboard - Monthly Rankings (${monthName})</h2>`;
-      table += '<table><tr><th>Rank</th><th>User</th><th>Monthly Steps</th><th>Yearly Steps</th><th>Daily Breakdown</th></tr>';
+      let table = `<h2>📊 Dashboard - Monthly Points (${monthName})</h2>`;
+      table += '<table><tr><th>Rank</th><th>User</th><th>Points</th><th>Monthly Steps</th><th>Yearly Steps</th><th>Daily Breakdown</th></tr>';
       userStats.forEach((u, i) => {
         const daily = Object.entries(u.dailySteps).sort().map(([d, s]) => `${d}: ${s}`).join('<br>');
-        table += `<tr><td>${i + 1}</td><td>${u.userId}</td><td>${u.steps}</td><td>${u.yearlySteps}</td><td>${daily}</td></tr>`;
+        table += `<tr><td>${i + 1}</td><td>${u.userId}</td><td>${u.points}</td><td>${u.steps}</td><td>${u.yearlySteps}</td><td>${daily}</td></tr>`;
       });
       table += '</table>';
       document.getElementById('dashboard').innerHTML = table;
@@ -113,8 +145,11 @@
 
       document.getElementById('stepForm').addEventListener('submit', (e) => {
         e.preventDefault();
+        let userId = document.getElementById('userId').value;
+        if (userId === '__other__') {
+          userId = document.getElementById('newUserId').value.trim();
+        }
         const steps = parseInt(document.getElementById('manualSteps').value);
-        const userId = document.getElementById('userId').value.trim();
         const selectedDate = document.getElementById('stepDate').value;
 
         if (!steps || !userId || !selectedDate) return alert("Please enter all fields: User ID, steps, and date.");
@@ -122,6 +157,11 @@
         saveStepsToSupabase(userId, steps, selectedDate);
       });
 
+      document.getElementById('userId').addEventListener('change', (e) => {
+        document.getElementById('newUserId').style.display = e.target.value === '__other__' ? 'inline-block' : 'none';
+      });
+
+      loadUserIds();
       renderDashboard();
     });
   </script>
@@ -129,7 +169,10 @@
 <body>
   <h1>Step Tracker App</h1>
   <form id="stepForm">
-    <label>User ID: <input type="text" id="userId" required /></label><br><br>
+    <label>User ID:
+      <select id="userId" required></select>
+      <input type="text" id="newUserId" placeholder="Enter new User ID" style="display:none;" />
+    </label><br><br>
     <label>Enter Steps: <input type="number" id="manualSteps" required /></label><br><br>
     <label>Date: <input type="date" id="stepDate" required /></label><br><br>
     <button type="submit">Submit Steps</button>
