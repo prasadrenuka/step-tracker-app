@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Step Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.5/dist/umd/supabase.min.js"></script>
+  <style>
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background-color: #f4f4f4; }
+  </style>
+  <script>
+    const SUPABASE_URL = "https://bnhnanrtrlhahekfotmm.supabase.co";
+    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJuaG5hbnJ0cmxoYWhla2ZvdG1tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQyMTQwODQsImV4cCI6MjA1OTc5MDA4NH0.Pyf-kM0QwQgzVkaHxjofLEE2wtJT24Wug3HjWzMpvns";
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    function padMonth(month) {
+      return month < 10 ? `0${month}` : `${month}`;
+    }
+
+    function getLastDayOfMonth(year, month) {
+      return new Date(year, month, 0).getDate();
+    }
+
+    function getCurrentMonthName() {
+      const now = new Date();
+      return now.toLocaleString('default', { month: 'long', year: 'numeric' });
+    }
+
+    async function saveStepsToSupabase(userId, steps, selectedDate) {
+      const { data, error } = await supabase.from('steps').insert([{ user_id: userId, step_date: selectedDate, steps }]);
+      if (error) {
+        console.error("Error saving to Supabase:", error);
+        alert("Failed to save steps. Please try again.");
+      } else {
+        displayStepSummary(userId, steps, selectedDate);
+      }
+    }
+
+    async function displayStepSummary(userId, stepsEntered, selectedDate) {
+      const date = new Date(selectedDate);
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+      const lastDay = getLastDayOfMonth(year, month);
+      const thisMonthStart = `${year}-${padMonth(month)}-01`;
+      const thisMonthEnd = `${year}-${padMonth(month)}-${lastDay}`;
+      const thisYear = `${year}`;
+
+      const { data: monthlyData } = await supabase.from('steps')
+        .select('steps')
+        .eq('user_id', userId)
+        .gte('step_date', thisMonthStart)
+        .lte('step_date', thisMonthEnd);
+
+      const { data: yearlyData } = await supabase.from('steps')
+        .select('steps')
+        .eq('user_id', userId)
+        .gte('step_date', `${thisYear}-01-01`)
+        .lte('step_date', `${thisYear}-12-31`);
+
+      const monthly = monthlyData?.reduce((sum, row) => sum + row.steps, 0) || 0;
+      const yearly = yearlyData?.reduce((sum, row) => sum + row.steps, 0) || 0;
+
+      document.getElementById('status').innerText = `✅ User: ${userId}\nSteps entered: ${stepsEntered} (for ${selectedDate})\nMonthly total: ${monthly}\nYearly total: ${yearly}`;
+      renderDashboard();
+    }
+
+    async function renderDashboard() {
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      const currentYear = new Date().getFullYear().toString();
+      const monthName = getCurrentMonthName();
+
+      const { data: allData } = await supabase.from('steps').select('*');
+      const grouped = {};
+
+      allData?.forEach(({ user_id, step_date, steps }) => {
+        const date = new Date(step_date);
+        const month = `${date.getFullYear()}-${padMonth(date.getMonth() + 1)}`;
+        const year = `${date.getFullYear()}`;
+        const day = step_date;
+
+        if (!grouped[user_id]) {
+          grouped[user_id] = { monthly: {}, yearly: {}, daily: {} };
+        }
+        grouped[user_id].monthly[month] = (grouped[user_id].monthly[month] || 0) + steps;
+        grouped[user_id].yearly[year] = (grouped[user_id].yearly[year] || 0) + steps;
+        grouped[user_id].daily[day] = (grouped[user_id].daily[day] || 0) + steps;
+      });
+
+      const userStats = Object.entries(grouped).map(([userId, data]) => {
+        return {
+          userId,
+          steps: data.monthly[currentMonth] || 0,
+          yearlySteps: data.yearly[currentYear] || 0,
+          dailySteps: data.daily
+        };
+      }).sort((a, b) => b.steps - a.steps);
+
+      let table = `<h2>📊 Dashboard - Monthly Rankings (${monthName})</h2>`;
+      table += '<table><tr><th>Rank</th><th>User</th><th>Monthly Steps</th><th>Yearly Steps</th><th>Daily Breakdown</th></tr>';
+      userStats.forEach((u, i) => {
+        const daily = Object.entries(u.dailySteps).sort().map(([d, s]) => `${d}: ${s}`).join('<br>');
+        table += `<tr><td>${i + 1}</td><td>${u.userId}</td><td>${u.steps}</td><td>${u.yearlySteps}</td><td>${daily}</td></tr>`;
+      });
+      table += '</table>';
+      document.getElementById('dashboard').innerHTML = table;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('stepDate').value = today;
+
+      document.getElementById('stepForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const steps = parseInt(document.getElementById('manualSteps').value);
+        const userId = document.getElementById('userId').value.trim();
+        const selectedDate = document.getElementById('stepDate').value;
+
+        if (!steps || !userId || !selectedDate) return alert("Please enter all fields: User ID, steps, and date.");
+
+        saveStepsToSupabase(userId, steps, selectedDate);
+      });
+
+      renderDashboard();
+    });
+  </script>
+</head>
+<body>
+  <h1>Step Tracker App</h1>
+  <form id="stepForm">
+    <label>User ID: <input type="text" id="userId" required /></label><br><br>
+    <label>Enter Steps: <input type="number" id="manualSteps" required /></label><br><br>
+    <label>Date: <input type="date" id="stepDate" required /></label><br><br>
+    <button type="submit">Submit Steps</button>
+  </form>
+  <pre id="status"></pre>
+  <div id="dashboard"></div>
+</body>
+</html>
